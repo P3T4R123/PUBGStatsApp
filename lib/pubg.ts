@@ -123,48 +123,48 @@ export async function getRecentMatches(
   const matchRefs: any[] = playerData.data.relationships.matches.data.slice(0, limit);
 
   const results: MatchSummary[] = [];
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-  // 2. Fetch each match (PUBG API rate limit: be conservative, fetch in small batches)
-  const batchSize = 5;
-  for (let i = 0; i < matchRefs.length; i += batchSize) {
-    const batch = matchRefs.slice(i, i + batchSize);
-    const settled = await Promise.allSettled(
-      batch.map((ref: any) => apiFetch(`${BASE}/matches/${ref.id}`, apiKey))
-    );
-    for (const result of settled) {
-      if (result.status !== 'fulfilled') continue;
-      const match = result.value;
-      const attrs = match.data.attributes;
-
-      // find this player's participant
-      const roster = match.included?.find((inc: any) =>
-        inc.type === 'participant' &&
-        inc.attributes?.stats?.name?.toLowerCase() === playerName.toLowerCase()
-      );
-      if (!roster) continue;
-
-      const stats = roster.attributes.stats;
-      const rosters: any[] = match.included?.filter((i: any) => i.type === 'roster') ?? [];
-      const myRoster = rosters.find((r: any) =>
-        r.relationships?.participants?.data?.some((p: any) => p.id === roster.id)
-      );
-
-      results.push({
-        id:           match.data.id,
-        mode:         attrs.gameMode ?? 'unknown',
-        map:          mapName(attrs.mapName),
-        date:         attrs.createdAt,
-        rank:         myRoster?.attributes?.stats?.rank ?? stats.winPlace ?? 0,
-        totalPlayers: myRoster?.attributes?.stats?.teamId ? (attrs.totalPlayers ?? 0) : (attrs.totalPlayers ?? 0),
-        kills:        stats.kills         ?? 0,
-        damage:       Math.round(stats.damageDealt ?? 0),
-        assists:      stats.assists        ?? 0,
-        survived:     Math.round(stats.timeSurvived ?? 0),
-        headshots:    stats.headshotKills  ?? 0,
-        walkDistance: Math.round((stats.walkDistance ?? 0) / 1000 * 100) / 100,
-        rideDistance: Math.round((stats.rideDistance ?? 0) / 1000 * 100) / 100,
-      });
+  // 2. Fetch matches sequentially with delay to respect PUBG rate limit (10 req/min)
+  for (let i = 0; i < matchRefs.length; i++) {
+    if (i > 0) await delay(700); // 700ms between requests = ~85 req/min max, safe for 10/min per player
+    let match: any;
+    try {
+      match = await apiFetch(`${BASE}/matches/${matchRefs[i].id}`, apiKey);
+    } catch {
+      continue;
     }
+
+    const attrs = match.data.attributes;
+
+    // find this player's participant
+    const roster = match.included?.find((inc: any) =>
+      inc.type === 'participant' &&
+      inc.attributes?.stats?.name?.toLowerCase() === playerName.toLowerCase()
+    );
+    if (!roster) continue;
+
+    const stats = roster.attributes.stats;
+    const rosters: any[] = match.included?.filter((i: any) => i.type === 'roster') ?? [];
+    const myRoster = rosters.find((r: any) =>
+      r.relationships?.participants?.data?.some((p: any) => p.id === roster.id)
+    );
+
+    results.push({
+      id:           match.data.id,
+      mode:         attrs.gameMode ?? 'unknown',
+      map:          mapName(attrs.mapName),
+      date:         attrs.createdAt,
+      rank:         myRoster?.attributes?.stats?.rank ?? stats.winPlace ?? 0,
+      totalPlayers: attrs.totalPlayers ?? 0,
+      kills:        stats.kills         ?? 0,
+      damage:       Math.round(stats.damageDealt ?? 0),
+      assists:      stats.assists        ?? 0,
+      survived:     Math.round(stats.timeSurvived ?? 0),
+      headshots:    stats.headshotKills  ?? 0,
+      walkDistance: Math.round((stats.walkDistance ?? 0) / 1000 * 100) / 100,
+      rideDistance: Math.round((stats.rideDistance ?? 0) / 1000 * 100) / 100,
+    });
   }
 
   return results;
