@@ -6,6 +6,8 @@ import { getFullPlayerData } from '@/lib/pubg';
 
 const PLAYERS = ['P3T4R', 'LukaJebemImMater', 'Jole1212', 'zeljonat0r'];
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -15,16 +17,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const results = await Promise.allSettled(
-      PLAYERS.map(name => getFullPlayerData(name, apiKey))
-    );
+    // Fetch sequentially with 1.5s delay between players to avoid 429 rate limit
+    const players = [];
+    for (let i = 0; i < PLAYERS.length; i++) {
+      if (i > 0) await sleep(1500);
+      try {
+        const data = await getFullPlayerData(PLAYERS[i], apiKey);
+        players.push({ ok: true, data });
+      } catch (err: any) {
+        players.push({ ok: false, name: PLAYERS[i], error: err.message });
+      }
+    }
 
-    const players = results.map((r, i) => {
-      if (r.status === 'fulfilled') return { ok: true, data: r.value };
-      return { ok: false, name: PLAYERS[i], error: (r.reason as Error).message };
-    });
-
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=60');
+    // Cache 5 minutes on Vercel edge to reduce API calls
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
     return res.status(200).json({ players, fetchedAt: new Date().toISOString() });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
